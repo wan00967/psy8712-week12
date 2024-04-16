@@ -1,0 +1,103 @@
+---
+title: "PSY 8712 Week 12 Project"
+author: "Jessica Wang"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Script Setting and Resources
+```{r}
+library(tidyverse)
+library(RedditExtractoR)
+library(tm)
+library(textstem)
+library(RWeka)
+library(topicmodels)
+library(ldatuning)
+library(doParallel)
+library(tidytext)
+library(topicmodels)
+library(wordcloud)
+```
+
+## Data Import and Cleaning
+```{r}
+#week12_tbl <- find_thread_urls(subreddit = "IOPsychology", period = "year") %>%
+  #{get_thread_content(.$url)} %>%
+  #.$threads %>%
+  #select(title, upvotes = score) %>%
+  #as_tibble()
+
+#write_csv(week12_tbl, "../data/week12_tbl.csv")
+
+week12_tbl <- read_csv("../data/week12_tbl.csv")
+```
+ˆ
+```{r}
+#creating corpus
+io_corpus_original <- VCorpus(VectorSource(week12_tbl$title)) 
+
+preprocess_corpus <- function(corpus) {
+  corpus %>%
+    tm_map(content_transformer(tolower)) %>%
+    tm_map(removePunctuation) %>%
+    tm_map(removeNumbers) %>%
+    tm_map(removeWords, c(stopwords("en"), "io", "psychology", "iopsychology", "riopsychology")) %>%
+    tm_map(stripWhitespace) %>%
+    tm_map(content_transformer(lemmatize_strings))
+}
+
+#apply preprocessing
+io_corpus <- preprocess_corpus(io_corpus_original)
+
+#comparing
+compare_them = function(corpus1, corpus2){
+  select_index = sample(1:length(io_corpus$content), 1)
+  original_row = corpus1[[select_index]]$content
+  cleaned_row = corpus2[[select_index]]$content
+  return(data.frame(original_title = original_row,
+                   cleaned_title = cleaned_row))
+}
+compare_them(io_corpus_original, io_corpus)
+
+#remove empty
+io_corpus_filt <- tm_filter(io_corpus, FUN = function(x) { return(nchar(stripWhitespace(x$content)[[1]]) > 0) } )
+```
+
+```{r}
+#define a custom tokenizer for unigrams and bigrams
+myTokenizer <- function(x) {
+  NGramTokenizer(x, Weka_control(min = 1, max = 2))
+}
+
+#create the Document-Term Matrix with the custom tokenizer
+io_dtm_empty <- DocumentTermMatrix(io_corpus, control = list(tokenize = myTokenizer))
+
+#sum tokens in each document to identify empty documents
+tokenCounts <- apply(io_dtm_empty, 1, sum)
+
+#filter out the documents with zero tokens
+io_dtm <- io_dtm_empty[tokenCounts > 0, ]
+
+#optionally, save the indices of documents with zero tokens for future reference
+indices_zero <- which(tokenCounts == 0)  # More direct approach
+zero_elements <- length(indices_zero)  # Number of empty documents
+
+#convert DTM to a tibble for further manipulation or inspection
+io_dtm_tbl <- as.data.frame(as.matrix(io_dtm)) %>% 
+  tibble::as_tibble()
+
+#remove sparse terms from the DTM to create a slimmer version
+sparse_threshold <- 0.997  # Keeping terms that appear in at least 0.3% of documents
+io_slim_dtm <- removeSparseTerms(io_dtm, sparse = sparse_threshold)
+
+#convert the slim DTM to a tibble
+io_slim_dtm_tbl <- as.data.frame(as.matrix(io_slim_dtm)) %>%
+  tibble::as_tibble()
+```
+
+
