@@ -22,6 +22,8 @@ library(doParallel)
 library(tidytext)
 library(topicmodels)
 library(wordcloud)
+library(caret)
+library(randomForest)
 ```
 
 ## Data Import and Cleaning
@@ -99,5 +101,115 @@ io_slim_dtm <- removeSparseTerms(io_dtm, sparse = sparse_threshold)
 io_slim_dtm_tbl <- as.data.frame(as.matrix(io_slim_dtm)) %>%
   tibble::as_tibble()
 ```
+
+## Analysis
+```{r}
+tuning <- FindTopicsNumber( 
+io_dtm, 
+topics = seq(2,15,by=1), 
+metrics = c("Griffiths2004", 
+"CaoJuan2009", 
+"Arun2010", 
+"Deveaud2014"),
+verbose = T,
+control = list(seed = 123),
+mc.cores = 6L 
+)
+
+#5 clusters seems best
+FindTopicsNumber_plot(tuning)
+
+io_lda <- LDA(io_dtm, k=5)
+
+tidy(io_lda, matrix="beta") %>% 
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  arrange(topic, -beta) %>%  View
+
+topics_tbl <- tidy(io_lda, matrix="gamma") %>%
+  group_by(document) %>%
+  top_n(1, gamma) %>%  # Get the top topic by highest probability for each document
+  slice(1) %>%
+  ungroup() %>%
+  rename(doc_id = document, probability = gamma) %>%
+  mutate(doc_id = as.numeric(doc_id)) %>%
+  arrange(doc_id)
+
+#directly associate titles from `week12_tbl` using row indices
+topics_tbl <- topics_tbl %>%
+  mutate(original = week12_tbl$title[doc_id])
+```
+
+## Questions
+###1. 
+Topic 1: Career and Education in Psychology. This topic seems to center around career-related queries and educational paths in psychology. Key terms include "job," "psych," "career," "psychologist," "grad," "internship," and "interview." It suggests a focus on professional development and educational opportunities in the field of psychology.
+Topic 2: Professional Events and Networking. The terms such as "work," "assessment," "conference," "siop", and "practitioner" suggest a theme related to professional gatherings, assessments in the workplace, and networking within the professional community.
+Topic 3: Academic Research. Highlighted by terms like "research," "study," and "graduate," this topic appears to focus on academic research and studies.
+Topic 4: Consulting and Career Advice. Terms like "advice," "consult," "career," "path," and "interview" suggest a focus on consulting practices and career advice, possibly providing guidance on career paths and job search strategies.
+Topic 5: Community and Discussions. Terms like "discussion," "read," "master," and "think,"likely reflects regular community discussions or threads, possibly in a recurring series, focusing on a variety of topical issues within the psychology community.
+
+###2. 
+They match decently, showing some content validity. There are some that don't line up perfectly, but I think that's to be expected
+
+```{r}
+week12_tbl <- week12_tbl %>%
+  mutate(doc_id = row_number())
+
+#join topics_tbl with week12_tbl based on doc_id
+final_tbl <- left_join(topics_tbl, week12_tbl, by = "doc_id")
+
+#statistical analysis, no significant difference
+summary(lm(upvotes~topic,data=final_tbl))
+
+#machine learning analysis, The RMSE values are quite high relative to the range of upvote counts (assuming a typical range of upvotes). This suggests that the model, while potentially offering some insight, is not highly accurate in predicting exact upvote numbers.
+#ensure the topic is a factor and upvotes are numeric
+final_tbl$topic <- as.factor(final_tbl$topic)
+final_tbl$upvotes <- as.numeric(final_tbl$upvotes)
+
+#splitting data into training and testing sets
+set.seed(123)  # For reproducibility
+training_indices <- createDataPartition(final_tbl$upvotes, p = 0.8, list = FALSE)
+training_data <- final_tbl[training_indices, ]
+testing_data <- final_tbl[-training_indices, ]
+
+#training control setup
+fitControl <- trainControl(
+  method = "cv",   # Cross-validation
+  number = 10      # Number of folds
+)
+
+# Train the model
+model <- train(
+  upvotes ~ topic,
+  data = training_data,
+  method = "rf",
+  trControl = fitControl,
+  tuneLength = 3  # Tune over 3 different values of mtry
+)
+
+# Output model details
+print(model$results)
+
+# Predict on the testing data
+predictions <- predict(model, testing_data)
+
+# Calculate RMSE for the test set
+test_rmse <- RMSE(predictions, testing_data$upvotes)
+cat("Test RMSE: ", test_rmse, "\n")
+```
+
+## Visualization
+```{r}
+#wordcloud
+wordcloud(
+  words = names(io_dtm_tbl),
+  freq = colSums(io_dtm_tbl),
+  max.words = 25
+)
+```
+
+
+
+
 
 
