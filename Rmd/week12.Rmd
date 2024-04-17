@@ -124,7 +124,7 @@ io_lda <- LDA(io_dtm, k=5)
 tidy(io_lda, matrix="beta") %>% 
   group_by(topic) %>%
   top_n(10, beta) %>%
-  arrange(topic, -beta) %>%  View
+  arrange(topic, -beta) 
 
 topics_tbl <- tidy(io_lda, matrix="gamma") %>%
   group_by(document) %>%
